@@ -1,0 +1,6 @@
+diffusers
+transformers
+accelerate
+safetensors
+opencv-python
+uuid
