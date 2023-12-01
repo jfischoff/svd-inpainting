@@ -1,8 +1,45 @@
 import torch
 
-from pipeline_stable_video_diffusion_inpaint import StableVideoDiffusionInpaintingPipeline
+from src.pipeline_stable_video_diffusion_inpaint import StableVideoDiffusionInpaintingPipeline
 from diffusers.utils import load_image, export_to_video
 from PIL import Image
+from einops import rearrange
+import os
+import ffmpeg
+
+def save_images(frames, output_folder):
+  os.makedirs(output_folder, exist_ok=True)
+  for i, frame in enumerate(frames):
+    frame.save(f"{output_folder}/{str(i).zfill(4)}.png")
+
+def frames_to_video(input_folder,
+                    output_file,
+                    pattern='%04d.png',
+                    frame_rate=8,
+                    vcodec='libx264',
+                    crf=18,
+                    preset='veryslow',
+                    pix_fmt='yuv420p'):
+  # Define input file pattern
+  input_pattern = os.path.join(input_folder, pattern)
+
+  # Create FFmpeg input stream from image sequence
+  input_stream = ffmpeg.input(input_pattern, framerate=frame_rate)
+
+  # create the directory for the output file
+  os.makedirs(os.path.dirname(output_file), exist_ok=True)
+
+  output_stream = ffmpeg.output(input_stream,
+                                output_file,
+                                vcodec=vcodec,
+                                crf=crf,
+                                preset=preset,
+                                pix_fmt=pix_fmt,
+                                y='-y')
+  # Run FFmpeg command to convert image sequence to video
+  ffmpeg.run(output_stream)
+
+
 
 pipe = StableVideoDiffusionInpaintingPipeline.from_pretrained(
     "stabilityai/stable-video-diffusion-img2vid-xt", torch_dtype=torch.float16, variant="fp16"
@@ -14,7 +51,7 @@ pipe.to("cuda")
 image = load_image("https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/svd/rocket.png?download=true")
 image = image.resize((1024, 576))
 
-mask_image = Image.open("mask.png")
+mask_image = Image.open("assets/mask.png")
 
 mask_image = mask_image.resize((1024, 576))
 
@@ -44,7 +81,8 @@ frames = pipe(image,
               add_predicted_noise=False,
               decode_chunk_size=1, 
               generator=generator, 
-              num_inference_steps=50,
+              num_inference_steps=100,
               callback_on_step_end=None).frames[0]
 
-export_to_video(frames, "output/generated.mp4", fps=7)
+save_images(frames, "output/example")
+frames_to_video("output/example", "output/example.mp4")

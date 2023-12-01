@@ -4,3 +4,5 @@ accelerate
 safetensors
 opencv-python
 uuid
+einops
+ffmpeg-python
