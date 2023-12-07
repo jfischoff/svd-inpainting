@@ -6,7 +6,7 @@ def read_requirements():
         return req.read().splitlines()
 
 setup(
-    name='svd-inpainting',
+    name='svd_inpainting',
     version='0.1',
     packages=find_packages(),
     install_requires=read_requirements(),
