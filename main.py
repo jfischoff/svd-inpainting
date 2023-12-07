@@ -1,6 +1,6 @@
 import torch
 
-from src.pipeline_stable_video_diffusion_inpaint import StableVideoDiffusionInpaintingPipeline
+from svd_inpainting.pipeline_stable_video_diffusion_inpaint import StableVideoDiffusionInpaintingPipeline
 from diffusers.utils import load_image, export_to_video
 from PIL import Image
 from einops import rearrange
@@ -48,11 +48,11 @@ pipe.to("cuda")
 
 
 # Load the conditioning image
-image = load_image("https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/svd/rocket.png?download=true")
+# image = load_image("https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/diffusers/svd/rocket.png?download=true")
+image = Image.open("assets/rocket.png")
 image = image.resize((1024, 576))
 
-mask_image = Image.open("assets/mask.png")
-
+mask_image = Image.open("assets/rocket_mask.png")
 mask_image = mask_image.resize((1024, 576))
 
 def callback(pipe, i, j, dict):
@@ -62,7 +62,7 @@ def callback(pipe, i, j, dict):
 
   decoded_first_frame = pipe.decode_latents(first_frame, 1)
   decoded_first_frame = decoded_first_frame.permute(0, 2, 3, 4, 1)[0][0]
-  
+
 
   latent_path = f"output/latent_{str(i).zfill(4)}.png"
 
@@ -76,13 +76,13 @@ def callback(pipe, i, j, dict):
 
 
 generator = torch.manual_seed(42)
-frames = pipe(image, 
+frames = pipe(image,
               mask_image,
               add_predicted_noise=False,
-              decode_chunk_size=1, 
-              generator=generator, 
+              decode_chunk_size=1,
+              generator=generator,
               num_inference_steps=100,
               callback_on_step_end=None).frames[0]
 
-save_images(frames, "output/example")
-frames_to_video("output/example", "output/example.mp4")
+save_images(frames, "output/quay")
+frames_to_video("output/quay", "output/quay.mp4")
