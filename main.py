@@ -81,7 +81,7 @@ frames = pipe(image,
               add_predicted_noise=False,
               decode_chunk_size=1,
               generator=generator,
-              num_inference_steps=100,
+              num_inference_steps=20,
               callback_on_step_end=None).frames[0]
 
 save_images(frames, "output/quay")

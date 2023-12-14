@@ -603,16 +603,20 @@ class StableVideoDiffusionInpaintingPipeline(DiffusionPipeline):
                 latents = self.scheduler.step(noise_pred, t, latents).prev_sample
 
                 if mask is not None:
-                    if add_predicted_noise:
-                        init_latents_proper = self.scheduler.add_noise(
-                            original_latents, noise_pred_uncond, torch.tensor([t])
-                        )
-                    else:
-                        init_latents_proper = self.scheduler.add_noise(
-                            original_latents, original_noise, torch.tensor([t])
-                        )
+                    # Don't totally get why this works but it fixes an issue
+                    # with noise artifacts showing up.
+                    if i + 1 < num_inference_steps:
+                        noise_timestep = timesteps[i + 1]
+                        if add_predicted_noise:
+                            init_latents_proper = self.scheduler.add_noise(
+                                original_latents, noise_pred_uncond, torch.tensor([noise_timestep])
+                            )
+                        else:
+                            init_latents_proper = self.scheduler.add_noise(
+                                original_latents, original_noise, torch.tensor([noise_timestep])
+                            )
 
-                    latents = (init_latents_proper * mask) + (latents * (1 - mask))
+                        latents = (init_latents_proper * mask) + (latents * (1 - mask))
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
