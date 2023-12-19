@@ -339,7 +339,7 @@ class StableVideoDiffusionInpaintingPipeline(DiffusionPipeline):
     def __call__(
         self,
         image: PIL.Image.Image | list[PIL.Image.Image] | torch.FloatTensor,
-        mask_image: PipelineImageInput | None,
+        mask_image: PipelineImageInput | None = None,
         add_predicted_noise: bool | None = False,
         height: int = 576,
         width: int = 1024,
