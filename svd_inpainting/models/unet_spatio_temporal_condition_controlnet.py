@@ -448,17 +448,19 @@ class UNetSpatioTemporalConditionControlNetModel(ModelMixin, ConfigMixin, UNet2D
 
             down_block_res_samples += res_samples
 
-            new_down_block_res_samples = ()
+            # 3. add additional residual
+            if down_block_additional_residuals is not None:
+                new_down_block_res_samples = ()
 
-            for down_block_res_sample, down_block_additional_residual in zip(
-                down_block_res_samples, down_block_additional_residuals
-            ):
-                down_block_res_sample = down_block_res_sample + down_block_additional_residual
-                new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
+                for down_block_res_sample, down_block_additional_residual in zip(
+                    down_block_res_samples, down_block_additional_residuals
+                ):
+                    down_block_res_sample = down_block_res_sample + down_block_additional_residual
+                    new_down_block_res_samples = new_down_block_res_samples + (down_block_res_sample,)
 
-            down_block_res_samples = new_down_block_res_samples
+                down_block_res_samples = new_down_block_res_samples
 
-        
+
         # 4. mid
         sample = self.mid_block(
             hidden_states=sample,
@@ -466,7 +468,8 @@ class UNetSpatioTemporalConditionControlNetModel(ModelMixin, ConfigMixin, UNet2D
             encoder_hidden_states=encoder_hidden_states,
             image_only_indicator=image_only_indicator,
         )
-        sample = sample + mid_block_additional_residual
+        if mid_block_additional_residual is not None:
+            sample = sample + mid_block_additional_residual
 
 
         # 5. up

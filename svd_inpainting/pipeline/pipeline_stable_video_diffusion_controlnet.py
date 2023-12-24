@@ -539,10 +539,12 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
             latents,
         )
         #prepare controlnet condition
-        controlnet_condition = self.image_processor.preprocess(controlnet_condition, height=height, width=width)
-        controlnet_condition = controlnet_condition.unsqueeze(0)
-        controlnet_condition = torch.cat([controlnet_condition] * 2)
-        controlnet_condition = controlnet_condition.to(device, latents.dtype)
+
+        if controlnet_condition is not None:
+            controlnet_condition = self.image_processor.preprocess(controlnet_condition, height=height, width=width)
+            controlnet_condition = controlnet_condition.unsqueeze(0)
+            controlnet_condition = torch.cat([controlnet_condition] * 2)
+            controlnet_condition = controlnet_condition.to(device, latents.dtype)
 
         # 6. Prepare mask latent variables
         mask = None
@@ -585,16 +587,21 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
                 # Concatenate image_latents over channels dimention
 
                 latent_model_input = torch.cat([latent_model_input, image_latents], dim=2)
-                down_block_res_samples, mid_block_res_sample = self.controlnet(
-                    latent_model_input,
-                    t,
-                    encoder_hidden_states=image_embeddings,
-                    controlnet_cond=controlnet_condition,
-                    added_time_ids=added_time_ids,
-                    conditioning_scale=controlnet_cond_scale,
-                    guess_mode=False,
-                    return_dict=False,
-                )
+
+                mid_block_res_sample = None
+                down_block_res_samples = None
+
+                if controlnet_condition is not None:
+                    down_block_res_samples, mid_block_res_sample = self.controlnet(
+                        latent_model_input,
+                        t,
+                        encoder_hidden_states=image_embeddings,
+                        controlnet_cond=controlnet_condition,
+                        added_time_ids=added_time_ids,
+                        conditioning_scale=controlnet_cond_scale,
+                        guess_mode=False,
+                        return_dict=False,
+                    )
 
 
 

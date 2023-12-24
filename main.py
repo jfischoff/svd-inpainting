@@ -183,7 +183,7 @@ frames = pipe(image,
               decode_chunk_size=1,
               generator=generator,
               num_inference_steps=20,
-              controlnet_condition=validation_control_images[:14],
+              controlnet_condition=None, # validation_control_images[:14],
               num_frames=14,
               callback_on_step_end=None).frames[0]
 
