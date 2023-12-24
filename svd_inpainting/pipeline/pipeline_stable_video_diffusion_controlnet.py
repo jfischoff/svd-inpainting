@@ -22,7 +22,7 @@ import torch
 from transformers import CLIPImageProcessor, CLIPVisionModelWithProjection
 from svd_inpainting.models.controlnet_sdv import ControlNetSDVModel
 
-from diffusers.image_processor import VaeImageProcessor
+from diffusers.image_processor import PipelineImageInput, VaeImageProcessor
 from diffusers.models import AutoencoderKLTemporalDecoder, UNetSpatioTemporalConditionModel
 from diffusers.utils import BaseOutput, logging
 from diffusers.utils.torch_utils import randn_tensor
@@ -141,7 +141,12 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
 
         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
         self.image_processor = VaeImageProcessor(vae_scale_factor=self.vae_scale_factor)
-
+        self.mask_processor = VaeImageProcessor(
+            vae_scale_factor=self.vae_scale_factor,
+            do_normalize=False,
+            do_binarize=True,
+            do_convert_grayscale=True,
+        )
 
     def _encode_image(self, image, device, num_videos_per_prompt, do_classifier_free_guidance):
         dtype = next(self.image_encoder.parameters()).dtype
@@ -189,6 +194,19 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
             # Here we concatenate the unconditional and text embeddings into a single batch
             # to avoid doing two forward passes
             image_latents = torch.cat([negative_image_latents, image_latents])
+
+        # duplicate image_latents for each generation per prompt, using mps friendly method
+        image_latents = image_latents.repeat(num_videos_per_prompt, 1, 1, 1)
+
+        return image_latents
+
+    def _encode_vae_unmask_image(
+        self, image: torch.Tensor, device, num_videos_per_prompt, generator
+    ):
+        image = image.to(device=device)
+        init_latent_dist = self.vae.encode(image).latent_dist
+        image_latents = init_latent_dist.sample(generator=generator)
+        image_latents = self.vae.config.scaling_factor * image_latents
 
         # duplicate image_latents for each generation per prompt, using mps friendly method
         image_latents = image_latents.repeat(num_videos_per_prompt, 1, 1, 1)
@@ -291,13 +309,16 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
             )
 
         if latents is None:
-            latents = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+            noise = randn_tensor(shape,
+                                 generator=generator,
+                                 device=device,
+                                 dtype=dtype)
         else:
-            latents = latents.to(device)
+            noise = latents.to(device)
 
         # scale the initial noise by the standard deviation required by the scheduler
-        latents = latents * self.scheduler.init_noise_sigma
-        return latents
+        latents = noise * self.scheduler.init_noise_sigma
+        return latents, noise
 
     @property
     def guidance_scale(self):
@@ -318,6 +339,8 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
     def __call__(
         self,
         image: Union[PIL.Image.Image, List[PIL.Image.Image], torch.FloatTensor],
+        mask_image: PipelineImageInput | None,
+        add_predicted_noise: bool | None = False,
         controlnet_condition:[torch.FloatTensor] = None,
         height: int = 576,
         width: int = 1024,
@@ -346,6 +369,14 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
             image (`PIL.Image.Image` or `List[PIL.Image.Image]` or `torch.FloatTensor`):
                 Image or images to guide image generation. If you provide a tensor, it needs to be compatible with
                 [`CLIPImageProcessor`](https://huggingface.co/lambdalabs/sd-image-variations-diffusers/blob/main/feature_extractor/preprocessor_config.json).
+            mask_image (`torch.FloatTensor`, `PIL.Image.Image`, `np.ndarray`, `List[torch.FloatTensor]`, `List[PIL.Image.Image]`, or `List[np.ndarray]`):
+                `Image`, numpy array or tensor representing an image batch to mask `image`. White pixels in the mask
+                are repainted while black pixels are preserved. If `mask_image` is a PIL image, it is converted to a
+                single channel (luminance) before use. If it's a numpy array or pytorch tensor, it should contain one
+                color channel (L) instead of 3, so the expected shape for pytorch tensor would be `(B, 1, H, W)`, `(B,
+                H, W)`, `(1, H, W)`, `(H, W)`. And for numpy array would be for `(B, H, W, 1)`, `(B, H, W)`, `(H, W,
+                1)`, or `(H, W)`. If `mask_image` is a list of images, it should be of the same length as `image`.
+            add_predicted_noise (`bool`, *optional*, defaults to True):
             height (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
                 The height in pixels of the generated image.
             width (`int`, *optional*, defaults to `self.unet.config.sample_size * self.vae_scale_factor`):
@@ -455,6 +486,12 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
         if needs_upcasting:
             self.vae.to(dtype=torch.float32)
 
+        original_latents = None
+        if mask_image is not None:
+            original_latents = self._encode_vae_unmask_image(
+                image, device, num_videos_per_prompt, generator
+            ).to(image_embeddings.dtype)
+
         image_latents = self._encode_vae_image(image, device, num_videos_per_prompt, do_classifier_free_guidance)
         image_latents = image_latents.to(image_embeddings.dtype)
 
@@ -465,7 +502,11 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
         # Repeat the image latents for each frame so we can concatenate them with the noise
         # image_latents [batch, channels, height, width] ->[batch, num_frames, channels, height, width]
         image_latents = image_latents.unsqueeze(1).repeat(1, num_frames, 1, 1, 1)
-        #image_latents = torch.cat([image_latents] * 2) if do_classifier_free_guidance else image_latents
+        if original_latents is not None:
+            original_latents = original_latents.unsqueeze(1).repeat(
+                1, num_frames, 1, 1, 1
+            )
+
 
         # 5. Get Added Time IDs
         added_time_ids = self._get_add_time_ids(
@@ -486,7 +527,7 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
         # 5. Prepare latent variables
 
         num_channels_latents = self.unet.config.in_channels
-        latents = self.prepare_latents(
+        latents, original_noise = self.prepare_latents(
             batch_size * num_videos_per_prompt,
             num_frames,
             num_channels_latents,
@@ -502,6 +543,14 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
         controlnet_condition = controlnet_condition.unsqueeze(0)
         controlnet_condition = torch.cat([controlnet_condition] * 2)
         controlnet_condition = controlnet_condition.to(device, latents.dtype)
+
+        # 6. Prepare mask latent variables
+        mask = None
+        if mask_image is not None:
+            mask = self.mask_processor.preprocess(
+                mask_image, height=height // 8, width=width // 8
+            )
+            mask = mask.to(device=device, dtype=latents.dtype)
 
         # 7. Prepare guidance scale
         guidance_scale = torch.linspace(min_guidance_scale, max_guidance_scale, num_frames).unsqueeze(0)
@@ -571,6 +620,22 @@ class StableVideoDiffusionPipelineControlNet(DiffusionPipeline):
 
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+                if mask is not None:
+                    # Don't totally get why this works but it fixes an issue
+                    # with noise artifacts showing up.
+                    if i + 1 < num_inference_steps:
+                        noise_timestep = timesteps[i + 1]
+                        if add_predicted_noise:
+                            init_latents_proper = self.scheduler.add_noise(
+                                original_latents, noise_pred_uncond, torch.tensor([noise_timestep])
+                            )
+                        else:
+                            init_latents_proper = self.scheduler.add_noise(
+                                original_latents, original_noise, torch.tensor([noise_timestep])
+                            )
+
+                        latents = (init_latents_proper * mask) + (latents * (1 - mask))
 
                 if callback_on_step_end is not None:
                     callback_kwargs = {}
